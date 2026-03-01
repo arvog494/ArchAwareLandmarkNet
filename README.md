@@ -54,7 +54,7 @@ See [EXPLANATION.md](EXPLANATION.md) for a detailed description of the pipeline 
 
 ## Prerequisites
 
-- **Python 3.10+**
+- **Python 3.10+ < 3.13**
 - **CUDA-capable GPU** (the pipeline runs deep learning models on GPU)
 - **NVIDIA CUDA Toolkit** matching your PyTorch version (CUDA 13.0 in the current setup)
 
@@ -306,3 +306,4 @@ Third-party components listed below have their own terms:
 - [Dataset download (OSF)](https://osf.io/xctdy/overview)
 - [Challenge repository](https://github.com/abenhamadou/3DTeethSeg_MICCAI_Challenges)
 - [ToothGroupNetwork (original)](https://github.com/limhoyeon/ToothGroupNetwork)
+
