@@ -301,12 +301,8 @@ Third-party components listed below have their own terms:
 
 ## Useful Links
 
-- [Team Drive](https://drive.google.com/drive/folders/15vMgn7vkbT6Ser5FctPmItDm1ny6su82)
 - [Paper using the dataset (arXiv)](https://arxiv.org/pdf/2210.06094)
 - [3DTeethSeg Challenge info](https://crns-smartvision.github.io/teeth3ds/)
 - [Dataset download (OSF)](https://osf.io/xctdy/overview)
 - [Challenge repository](https://github.com/abenhamadou/3DTeethSeg_MICCAI_Challenges)
 - [ToothGroupNetwork (original)](https://github.com/limhoyeon/ToothGroupNetwork)
-
-- [Trimesh](https://github.com/mikedh/trimesh)
-
