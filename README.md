@@ -131,6 +131,8 @@ cd ../../..
 
 ### Quick setup
 
+1. Downlaod and extract the files in the root of the repo those files: [Drive](https://drive.google.com/drive/folders/11BqwYJ2_Vw7VXD4LUwX5Cm7Xz2NX96Hv?usp=sharing)
+
 1. **Download the 3DTeethLand dataset** from [OSF](https://osf.io/xctdy/overview). You will get four archives (meshes train/test + landmarks train/test). Extract them.
 
 2. **Run the setup script** to merge train/test into the folder structure expected by the pipeline:
@@ -303,4 +305,5 @@ Third-party components listed below have their own terms:
 - [Dataset download (OSF)](https://osf.io/xctdy/overview)
 - [Challenge repository](https://github.com/abenhamadou/3DTeethSeg_MICCAI_Challenges)
 - [ToothGroupNetwork (original)](https://github.com/limhoyeon/ToothGroupNetwork)
+
 - [Trimesh](https://github.com/mikedh/trimesh)
