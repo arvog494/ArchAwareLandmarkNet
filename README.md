@@ -1,2 +1,306 @@
-# ArchAwareLandmarkNet
-End-to-end model that takes a raw jaw mesh (`.obj` / `.stl`) and produces trajectory for a robot.
+# 3D Teeth Pipeline — Scan Segmentation, Labeling, Landmark Prediction & Scanner Path Planning
+
+End-to-end pipeline that takes a raw jaw mesh (`.obj` / `.stl`) and produces:
+1. **Tooth instance segmentation** (via ToothGroupNetwork)
+2. **FDI labeling** (via DGCNNSeg4D with arch-index encoding)
+3. **Tooth landmark prediction** (via ArchAwareLandmarkNet)
+4. **Scanner path planning** with collision-checked 6-DoF poses
+
+See [EXPLANATION.md](EXPLANATION.md) for a detailed description of the pipeline stages, model architectures and metrics.
+
+> **Note:** This project was developed by students as part of an academic research project and is intended for scholarly purposes only.
+
+---
+
+## Repository Structure
+
+```
+├── final_pipeline.ipynb            # End-to-end demo: runs full pipeline on a mesh, displays 10 views
+├── fdi_model_training.ipynb        # Model definition & training for FDI labeling (DGCNNSeg4D, PointNet variants)
+├── landmarks_preparation.ipynb     # Landmark dataset building & scanner path planning (ground-truth annotations)
+├── landmarks_prediction_utils.py   # Core utility module (~2700 lines): all models, pipeline logic, visualization
+├── settings.py                     # Data path configuration
+├── toothgroupnet_single_infer.py   # ToothGroupNetwork inference wrapper (called as subprocess)
+├── EXPLANATION.md                  # Detailed pipeline & architecture explanation
+├── requirements.txt                # Python dependencies
+├── setup_data.py                   # Script to rebuild __data__/ from OSF downloads
+├── ToothGroupNetwork_patches/      # Modified files to apply over the original TGNet repo (see below)
+├── checkpoints/                    # Trained model weights
+│   ├── best_DGCNNSeg4D_no_gencive.pt      # FDI labeling model (DGCNNSeg4D)
+│   ├── best_landmark_model.pt              # Landmark prediction model (ArchAwareLandmarkNet)
+│   ├── ckpts(new)/
+│   │   ├── tgnet_fps.h5                    # ToothGroupNetwork stage-1 weights
+│   │   └── tgnet_bdl.h5                    # ToothGroupNetwork boundary-refinement weights
+│   └── ...                                 # Other experimental checkpoints (PointNet, Arc variants, TL-DETR runs)
+└── __data__/                       # Datasets (see Data section below)
+```
+
+### File Descriptions
+
+| File | Purpose |
+|------|---------|
+| **final_pipeline.ipynb** | The main demonstration notebook. Loads a jaw mesh, runs the full pipeline (segmentation → FDI → landmarks → path), and renders 10 trimesh visualizations (per-tooth colors, FDI labels, landmarks, trajectory, scanner poses, bounding box). |
+| **fdi_model_training.ipynb** | Defines and trains the FDI tooth-labeling models. Contains `PointNetSegV2`, `PointNetSegXYZT`, and `DGCNNSeg4D` architectures, data loading from pickle datasets, training loops, and evaluation. Saves checkpoints to `checkpoints/`. |
+| **landmarks_preparation.ipynb** | Builds the landmark dataset from ground-truth annotations. Includes teeth-level feature extraction, dataset splitting, scanner path planning using true landmarks, and visualization of the generated paths. |
+| **landmarks_prediction_utils.py** | The core Python module. Contains all model definitions (`DGCNNSeg4D`, `ArchAwareLandmarkNet`, `GlobalPointNet`, `ToothPointNet`), the full inference pipeline (`run_full_pipeline()`), FDI prediction, landmark prediction, scanner path generation with collision avoidance (FCL), and visualization utilities. Imported by `final_pipeline.ipynb`. |
+| **settings.py** | Defines data path constants (`SOURCE_DATA_PATH`, `DATA_PATH`, `PROCESSED_DATA_PATH`, `LANDMARKS_PATH`). Imported by all notebooks and the utility module. |
+| **toothgroupnet_single_infer.py** | Standalone script that runs ToothGroupNetwork inference on a single mesh file. Called as a **subprocess** by `landmarks_prediction_utils.py` to isolate GPU memory. Imports from the `ToothGroupNetwork/` directory. |
+| **EXPLANATION.md** | Full technical explanation of the pipeline, model architectures (TGNet, DGCNNSeg4D, ArchAwareLandmarkNet), the scanner path algorithm, and reported metrics. |
+| **setup_data.py** | The 3DTeethLand dataset from OSF is split into train/test archives. This script merges them into the flat folder layout expected by the pipeline (`3DTeethLand_combined/`, `landmarks/`). |
+
+---
+
+## Prerequisites
+
+- **Python 3.10+**
+- **CUDA-capable GPU** (the pipeline runs deep learning models on GPU)
+- **NVIDIA CUDA Toolkit** matching your PyTorch version (CUDA 13.0 in the current setup)
+
+---
+
+## Installation
+
+### 1. Install Python dependencies
+
+```bash
+pip install -r requirements.txt
+```
+
+> **Note:** The `requirements.txt` pins exact versions from the development environment (PyTorch 2.9.1+cu130). You may need to adjust the PyTorch/CUDA versions for your hardware. See [PyTorch installation](https://pytorch.org/get-started/locally/).
+
+### 2. Clone and patch ToothGroupNetwork
+
+The pipeline depends on [ToothGroupNetwork](https://github.com/limhoyeon/ToothGroupNetwork) for tooth instance segmentation. The original repo has been patched with robustness fixes and PyTorch 2.x compatibility. To set it up:
+
+```bash
+# Clone the original repository into the project root
+git clone https://github.com/limhoyeon/ToothGroupNetwork.git
+
+# Apply patches (copy modified files over the originals)
+cp -r ToothGroupNetwork_patches/* ToothGroupNetwork/
+```
+
+On **Windows PowerShell**:
+```powershell
+git clone https://github.com/limhoyeon/ToothGroupNetwork.git
+Copy-Item -Path "ToothGroupNetwork_patches\*" -Destination "ToothGroupNetwork\" -Recurse -Force
+```
+
+#### What the patches fix
+
+The `ToothGroupNetwork_patches/` folder contains **10 modified files** that fix:
+
+| File | Changes |
+|------|---------|
+| `inference_pipelines/inference_pipeline_tgn.py` | Robustness: PCA fallback when <3 tooth centroids, safe handling of empty instance labels, fallback chain for centerpoint estimation |
+| `ops_utils.py` | Guards: early return when `sub_points` is empty, handles all-noise DBSCAN results, safe eigenvalue array checks, protected KDTree reassignment |
+| `external_libs/pointnet2_utils/pointnet2_utils.py` | Makes CUDA `pointops` extension **optional** — falls back to a pure-PyTorch farthest-point-sampling loop if the extension isn't built |
+| `external_libs/pointops/setup.py` | Removes hard-coded GPU architecture flags (`compute_61`, `compute_75`) for portability across different GPUs |
+| 6× `external_libs/pointops/src/*/..._cuda.cpp` | Removes deprecated `#include <THC/THC.h>` header (removed in PyTorch 2.x) |
+
+### 3. Build the `pointops` CUDA extension (optional)
+
+The `pointops` CUDA extension accelerates farthest-point-sampling in ToothGroupNetwork. Thanks to the patches, **it is optional** — the code falls back to a pure-PyTorch implementation if the extension is not available (slower but functional).
+
+To build it for best performance:
+
+```bash
+cd ToothGroupNetwork/external_libs/pointops
+python setup.py install
+cd ../../..
+```
+
+> **Note:** This requires the NVIDIA CUDA Toolkit and a C++ compiler. On Windows, you need Visual Studio Build Tools with the "Desktop development with C++" workload installed. If the build fails, the pipeline will still work using the PyTorch fallback.
+
+### 4. Key dependencies
+
+| Package | Purpose |
+|---------|---------|
+| `torch` (+ CUDA) | Deep learning framework |
+| `trimesh` | 3D mesh loading, visualization, scene rendering |
+| `open3d` | Point cloud operations (used by TGNet inference) |
+| `python-fcl` | Flexible Collision Library — used for collision-free scanner pose placement |
+| `pymeshlab` | Mesh processing utilities |
+| `scipy` | Spline fitting, spatial trees, optimization |
+| `pandas` | Dataset management (pickle-based jaw datasets) |
+| `pyvista` / `vtk` | Additional 3D visualization |
+
+---
+
+## Data
+
+### Quick setup
+
+1. **Download the 3DTeethLand dataset** from [OSF](https://osf.io/xctdy/overview). You will get four archives (meshes train/test + landmarks train/test). Extract them.
+
+2. **Run the setup script** to merge train/test into the folder structure expected by the pipeline:
+
+   ```bash
+   python setup_data.py \
+       --meshes-train    path/to/3DTeethSeg22_challenge_train \
+       --meshes-test     path/to/3DTeethSeg22_challenge_test \
+       --landmarks-train path/to/3DTeethLand_landmarks_train \
+       --landmarks-test  path/to/3DTeethLand_landmarks_test
+   ```
+
+3. **Extract checkpoints:**
+   ```bash
+   unzip checkpoints.zip
+   ```
+
+The `__data__/processed_data/` folder (pre-built pickle datasets and trajectory references) is already included in the repository.
+
+### Source dataset
+
+The dataset was published for the **3DTeethLand Challenge MICCAI 2024** by Achraf Ben Hamadou and Oussama Smaoui. No modifications were made to the source data.
+
+- **Download:** [https://osf.io/xctdy/overview](https://osf.io/xctdy/overview)
+- **Challenge info:** [https://crns-smartvision.github.io/teeth3ds/](https://crns-smartvision.github.io/teeth3ds/)
+- **Paper:** [https://arxiv.org/pdf/2210.06094](https://arxiv.org/pdf/2210.06094)
+
+Data is provided under [CC BY-NC-ND 4.0](https://creativecommons.org/licenses/by-nc-nd/4.0/).
+
+### Data directory structure
+
+After running `setup_data.py`, the `__data__/` folder should look like this:
+
+```
+__data__/
+├── 3DTeethLand_combined/       # ← created by setup_data.py (merged train+test meshes)
+│   ├── lower/
+│   │   └── {ID}/{ID}_lower.obj + .json
+│   └── upper/
+│       └── {ID}/{ID}_upper.obj + .json
+├── landmarks/                  # ← created by setup_data.py (merged train+test landmarks)
+│   ├── lower/
+│   │   └── {ID}/{ID}_lower__kpt.json
+│   └── upper/
+│       └── {ID}/{ID}_upper__kpt.json
+├── processed_data/             # Pre-built pickle datasets (included in repo)
+│   ├── lower_jaw_dataset.pkl
+│   ├── upper_jaw_dataset.pkl
+│   ├── lower_jaw_landmarks_dataset.pkl
+│   ├── upper_jaw_landmarks_dataset.pkl
+│   ├── landmarks_lower.pkl
+│   ├── landmarks_upper.pkl
+│   ├── path_pipeline/
+│   └── stl_trajectory/
+├── Teeth3DS_train_test_split/  # Train/test split text files (included in repo)
+└── landmarks_train_test_split/ # Landmark train/test splits (included in repo)
+```
+
+### Path configuration
+
+All data paths are configured in `settings.py`. If you place the data elsewhere, update the paths there:
+
+```python
+from pathlib import Path
+
+SOURCE_DATA_PATH = Path("__data__")
+TRAIN_TEST_SPLIT_NAME = SOURCE_DATA_PATH / "Teeth3DS_train_test_split"
+DATA_PATH = SOURCE_DATA_PATH / "3DTeethLand_combined"
+PROCESSED_DATA_PATH = SOURCE_DATA_PATH / "processed_data"
+LANDMARKS_PATH = SOURCE_DATA_PATH / "landmarks"
+```
+
+---
+
+## Checkpoints
+
+### Required for inference (used by `final_pipeline.ipynb`)
+
+| File | Model | Description |
+|------|-------|-------------|
+| `checkpoints/best_DGCNNSeg4D_no_gencive.pt` | DGCNNSeg4D | FDI tooth labeling (4D DGCNN with arch-index) |
+| `checkpoints/best_landmark_model.pt` | ArchAwareLandmarkNet | Per-tooth landmark prediction (9 landmarks + cusp count) |
+| `checkpoints/ckpts(new)/tgnet_fps.h5` | ToothGroupNetwork (stage 1) | Tooth instance segmentation — FPS grouping |
+| `checkpoints/ckpts(new)/tgnet_bdl.h5` | ToothGroupNetwork (stage 2) | Boundary-aware refinement |
+
+### Other checkpoints (from experiments)
+
+| File | Description |
+|------|-------------|
+| `Arc_PointNetSeg_no_gencive.pt` | Arch-aware PointNet variant (trained in `fdi_model_training.ipynb`) |
+| `PointNetSeg_no_gencive.pt` | Basic PointNet segmentation model |
+| `best_landmark_model_v1.pt`, `v2.pt` | Earlier landmark model iterations |
+| `instseg_full.ckpt`, `landmarks_full.ckpt` | Teethland library checkpoints (not used by current pipeline) |
+| `tldetr_runs/`, `tldetr_runs_v0/` | TL-DETR experiment runs (not used by current pipeline) |
+
+---
+
+## How to Run
+
+### Quick demo — Full pipeline visualization
+
+Open **`final_pipeline.ipynb`** and run all cells. It will:
+1. Load a sample jaw mesh from `__data__/3DTeethLand_combined/`
+2. Run ToothGroupNetwork (as subprocess) for tooth instance segmentation
+3. Run DGCNNSeg4D for FDI labeling
+4. Run ArchAwareLandmarkNet for landmark prediction
+5. Generate a collision-free scanner path
+6. Display 10 inline 3D visualizations
+
+> **Important:** The first run will invoke `toothgroupnet_single_infer.py` as a subprocess. Make sure the ToothGroupNetwork folder is properly cloned and patched (see Installation step 2).
+
+### Train FDI models
+
+Open **`fdi_model_training.ipynb`**. This notebook:
+- Loads pre-processed jaw datasets from `__data__/processed_data/*.pkl`
+- Defines and trains `DGCNNSeg4D` and PointNet variants
+- Evaluates accuracy and saves checkpoints to `checkpoints/`
+
+### Build landmark datasets & plan paths from ground truth
+
+Open **`landmarks_preparation.ipynb`**. This notebook:
+- Reads ground-truth landmark annotations
+- Builds per-tooth feature datasets for landmark training
+- Implements scanner path planning using known landmark positions
+- Visualizes the generated trajectories
+
+---
+
+## Pipeline Overview
+
+```
+┌─────────────┐     ┌──────────────────┐     ┌────────────┐     ┌──────────────────┐     ┌─────────────────┐
+│  Input Mesh  │────▶│ ToothGroupNetwork │────▶│ DGCNNSeg4D │────▶│ ArchAwareLandmark │────▶│ Scanner Path    │
+│  (.obj/.stl) │     │ (Instance Seg)    │     │ (FDI Label) │     │ Net (Landmarks)   │     │ Planner (6DoF)  │
+└─────────────┘     └──────────────────┘     └────────────┘     └──────────────────┘     └─────────────────┘
+```
+
+1. **Input and normalization** — Load jaw mesh, rebase to TGNet axis convention, center and scale.
+2. **Tooth instance segmentation** — ToothGroupNetwork (`tgnet_fps` + `tgnet_bdl`) produces per-vertex instance labels.
+3. **FDI labeling** — Sample `n_points`, compute arch index `t`, run DGCNNSeg4D, map to FDI numbers, propagate via kNN majority vote (`k=5`).
+4. **Landmark prediction** — Per tooth: sample jaw + tooth points, predict 9 landmarks + cusp-count class with ArchAwareLandmarkNet.
+5. **Scanner path planning** — Order teeth by FDI, extract keypoints (buccal/occlusal/lingual), spline fit, build scanning box, interpolate 6-DoF orientations, place scanner poses with collision avoidance (FCL).
+
+For full architectural details, see [EXPLANATION.md](EXPLANATION.md).
+
+---
+
+## License & Compliance
+
+This project is released under the **MIT License** — see [LICENSE](LICENSE).
+
+The MIT license covers **only the code written by the team** (pipeline notebooks,
+`landmarks_prediction_utils.py`, `settings.py`, `toothgroupnet_single_infer.py`, etc.).
+Third-party components listed below have their own terms:
+
+| Component | License | Notes |
+|---|---|---|
+| **ToothGroupNetwork** (limhoyeon/ToothGroupNetwork) | **No license in repo** | The original repository does not include a license file, meaning all rights are reserved by default. Our `ToothGroupNetwork_patches/` folder contains modifications to 10 of their files. Before redistributing this project publicly, consider contacting the authors (Ho Yeon Lim, Min Chang Kim) for explicit permission. |
+| **3DTeethLand dataset** | CC BY-NC-ND 4.0 | Non-commercial use only, no derivatives, attribution required. The data in `__data__/` is subject to these terms. |
+| **pymeshlab** | GPL v3 | Copyleft — if you distribute a combined binary that links pymeshlab, the whole distribution may need to be released under GPL v3. In our case pymeshlab is used as a runtime dependency (mesh processing), not bundled, so the MIT license on our code is not affected for source-only distribution. |
+| **All other major deps** (PyTorch, open3d, trimesh, scipy, scikit-learn, pyvista, VTK, timm, lightning) | MIT / BSD / Apache 2.0 | Permissive — no compliance issue. |
+
+---
+
+## Useful Links
+
+- [Team Drive](https://drive.google.com/drive/folders/15vMgn7vkbT6Ser5FctPmItDm1ny6su82)
+- [Paper using the dataset (arXiv)](https://arxiv.org/pdf/2210.06094)
+- [3DTeethSeg Challenge info](https://crns-smartvision.github.io/teeth3ds/)
+- [Dataset download (OSF)](https://osf.io/xctdy/overview)
+- [Challenge repository](https://github.com/abenhamadou/3DTeethSeg_MICCAI_Challenges)
+- [ToothGroupNetwork (original)](https://github.com/limhoyeon/ToothGroupNetwork)
+- [Trimesh](https://github.com/mikedh/trimesh)
