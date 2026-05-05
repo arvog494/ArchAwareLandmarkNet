@@ -266,10 +266,10 @@ Open **`landmarks_preparation.ipynb`**. This notebook:
 ## Pipeline Overview
 
 ```
-┌─────────────┐     ┌──────────────────┐     ┌────────────┐     ┌──────────────────┐     ┌─────────────────┐
-│  Input Mesh  │────▶│ ToothGroupNetwork │────▶│ DGCNNSeg4D │────▶│ ArchAwareLandmark │────▶│ Scanner Path    │
+┌──────────────┐     ┌───────────────────┐     ┌─────────────┐     ┌───────────────────┐     ┌─────────────────┐
+│  Input Mesh  │────>│ ToothGroupNetwork │────>│ DGCNNSeg4D  │────>│ ArchAwareLandmark │────>│ Scanner Path    │
 │  (.obj/.stl) │     │ (Instance Seg)    │     │ (FDI Label) │     │ Net (Landmarks)   │     │ Planner (6DoF)  │
-└─────────────┘     └──────────────────┘     └────────────┘     └──────────────────┘     └─────────────────┘
+└──────────────┘     └───────────────────┘     └─────────────┘     └───────────────────┘     └─────────────────┘
 ```
 
 1. **Input and normalization** — Load jaw mesh, rebase to TGNet axis convention, center and scale.
@@ -292,10 +292,8 @@ Third-party components listed below have their own terms:
 
 | Component | License | Notes |
 |---|---|---|
-| **ToothGroupNetwork** (limhoyeon/ToothGroupNetwork) | **No license in repo** | The original repository does not include a license file, meaning all rights are reserved by default. Our `ToothGroupNetwork_patches/` folder contains modifications to 10 of their files. Before redistributing this project publicly, consider contacting the authors (Ho Yeon Lim, Min Chang Kim) for explicit permission. |
-| **3DTeethLand dataset** | CC BY-NC-ND 4.0 | Non-commercial use only, no derivatives, attribution required. The data in `__data__/` is subject to these terms. |
-| **pymeshlab** | GPL v3 | Copyleft — if you distribute a combined binary that links pymeshlab, the whole distribution may need to be released under GPL v3. In our case pymeshlab is used as a runtime dependency (mesh processing), not bundled, so the MIT license on our code is not affected for source-only distribution. |
-| **All other major deps** (PyTorch, open3d, trimesh, scipy, scikit-learn, pyvista, VTK, timm, lightning) | MIT / BSD / Apache 2.0 | Permissive — no compliance issue. |
+| **ToothGroupNetwork** (limhoyeon/ToothGroupNetwork) | **No license in repo** | Our `ToothGroupNetwork_patches/` folder contains modifications to 10 of their files. |
+| **3DTeethLand dataset** | CC BY-NC-ND 4.0 | |
 
 ---
 
